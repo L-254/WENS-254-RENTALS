@@ -1,0 +1,271 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wens 254 Rentals | Admin</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial;background:#f3f5f4;color:#172b25}
+header{background:#102d27;color:white;padding:22px}
+header h2{margin:0}
+main{max-width:1100px;margin:30px auto;padding:15px}
+.panel,.stat{background:white;padding:22px;border-radius:12px;margin-bottom:18px}
+input,select{width:100%;padding:13px;margin:8px 0 15px;border:1px solid #ddd;border-radius:6px}
+button{padding:12px 18px;background:#176b4b;color:white;border:0;border-radius:6px;cursor:pointer}
+button.secondary{background:#52645c}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:15px}
+.stat strong{font-size:27px;display:block;margin-top:10px}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:12px;border-bottom:1px solid #eee}
+.table-wrap{overflow-x:auto}
+.hidden{display:none}
+#message{margin:12px 0;color:#a33}
+</style>
+</head>
+<body>
+<header>
+<h2>WENS 254 RENTALS</h2>
+<p>Administrator Dashboard</p>
+</header>
+
+<main>
+<section id="login" class="panel">
+<h2>Admin Login</h2>
+<p>Sign in to manage your rental property.</p>
+<form id="loginForm">
+<label>Email address</label>
+<input id="email" type="email" required>
+<label>Password</label>
+<input id="password" type="password" required>
+<button type="submit">Sign In</button>
+</form>
+<p id="message"></p>
+</section>
+
+<section id="dashboard" class="hidden">
+<div class="panel">
+<h2>Welcome, Administrator</h2>
+<p>Kamulu, Nairobi</p>
+<button class="secondary" id="logout">Sign Out</button>
+</div>
+
+<div class="stats">
+<div class="stat">Total rooms<strong id="totalRooms">0</strong></div>
+<div class="stat">Occupied<strong id="occupied">0</strong></div>
+<div class="stat">Available<strong id="available">0</strong></div>
+<div class="stat">Active tenants<strong id="tenants">0</strong></div>
+</div>
+
+<div class="panel">
+<h2>Room Management</h2>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Room</th><th>Rent</th><th>Status</th></tr></thead>
+<tbody id="roomRows"></tbody>
+</table>
+</div>
+</div>
+
+<div class="panel">
+<h2>Register a Tenant</h2>
+<form id="tenantForm">
+<label>Tenant full name</label>
+<input id="tenantName" required>
+<label>Phone number</label>
+<input id="tenantPhone" required>
+<label>Email (optional)</label>
+<input id="tenantEmail" type="email">
+<label>Available room</label>
+<select id="roomSelect" required></select>
+<label>Lease start date</label>
+<input id="leaseStart" type="date" required>
+<button type="submit">Register Tenant</button>
+</form>
+<p id="tenantMessage"></p>
+</div>
+</section>
+</main>
+
+<script>
+const SUPABASE_URL = "https://futfgvbvedxmbubpevhf.supabase.co";
+const SUPABASE_KEY = "sb_publishable_5xQ35gc8zrBbtRPMZxsCVQ_YqkzDy5K";
+
+const db = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+const $ = id => document.getElementById(id);
+
+function safe(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",
+    '"':"&quot;","'":"&#39;"
+  }[c]));
+}
+
+function money(value) {
+  return "KSh " + Number(value).toLocaleString("en-KE");
+}
+
+async function showDashboard() {
+  const {data:{user}} = await db.auth.getUser();
+
+  if (!user) return;
+
+  const {data:profile,error} = await db
+    .from("profiles")
+    .select("role")
+    .eq("id",user.id)
+    .single();
+
+  if (error || profile?.role !== "admin") {
+    $("message").textContent =
+      "Administrator access could not be verified.";
+    await db.auth.signOut();
+    return;
+  }
+
+  $("login").classList.add("hidden");
+  $("dashboard").classList.remove("hidden");
+
+  await loadDashboard();
+}
+
+async function loadDashboard() {
+  const {data:rooms,error:roomError} = await db
+    .from("rooms")
+    .select("id,room_number,monthly_rent,status")
+    .order("room_number");
+
+  if (roomError) {
+    $("message").textContent = roomError.message;
+    return;
+  }
+
+  const {data:tenants,error:tenantError} = await db
+    .from("tenants")
+    .select("id")
+    .eq("status","active");
+
+  if (tenantError) {
+    $("message").textContent = tenantError.message;
+    return;
+  }
+
+  $("totalRooms").textContent = rooms.length;
+  $("occupied").textContent =
+    rooms.filter(r => r.status === "occupied").length;
+  $("available").textContent =
+    rooms.filter(r => r.status === "available").length;
+  $("tenants").textContent = tenants.length;
+
+  $("roomRows").innerHTML = rooms.map(r => `
+    <tr>
+      <td>${safe(r.room_number)}</td>
+      <td>${money(r.monthly_rent)}</td>
+      <td>${safe(r.status)}</td>
+    </tr>
+  `).join("");
+
+  const availableRooms = rooms.filter(
+    r => r.status === "available"
+  );
+
+  $("roomSelect").innerHTML =
+    '<option value="">Choose a room</option>' +
+    availableRooms.map(r =>
+      `<option value="${safe(r.id)}">${safe(r.room_number)}</option>`
+    ).join("");
+}
+
+$("loginForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  $("message").textContent = "Signing in...";
+
+  const {error} = await db.auth.signInWithPassword({
+    email:$("email").value.trim(),
+    password:$("password").value
+  });
+
+  if(error) {
+    $("message").textContent = error.message;
+    return;
+  }
+
+  await showDashboard();
+});
+
+$("tenantForm").addEventListener("submit",async e=>{
+  e.preventDefault();
+  $("tenantMessage").textContent = "Saving tenant...";
+
+  const roomId = $("roomSelect").value;
+
+  const {data:room,error:roomError} = await db
+    .from("rooms")
+    .select("id,status")
+    .eq("id",roomId)
+    .single();
+
+  if(roomError || room.status !== "available") {
+    $("tenantMessage").textContent =
+      "That room is no longer available.";
+    await loadDashboard();
+    return;
+  }
+
+  const {error} = await db.from("tenants").insert({
+    room_id:roomId,
+    full_name:$("tenantName").value.trim(),
+    phone:$("tenantPhone").value.trim(),
+    email:$("tenantEmail").value.trim() || null,
+    lease_start:$("leaseStart").value,
+    status:"active"
+  });
+
+  if(error) {
+    $("tenantMessage").textContent = error.message;
+    return;
+  }
+
+  const {error:updateError} = await db
+    .from("rooms")
+    .update({status:"occupied"})
+    .eq("id",roomId);
+
+  if(updateError) {
+    $("tenantMessage").textContent =
+      "Tenant saved, but room status needs attention: " +
+      updateError.message;
+    await loadDashboard();
+    return;
+  }
+
+  $("tenantMessage").textContent =
+    "Tenant registered successfully!";
+
+  $("tenantForm").reset();
+  await loadDashboard();
+});
+
+$("logout").addEventListener("click",async()=>{
+  await db.auth.signOut();
+  $("dashboard").classList.add("hidden");
+  $("login").classList.remove("hidden");
+});
+
+db.auth.onAuthStateChange((event,session)=>{
+  if(event === "SIGNED_OUT") {
+    $("dashboard").classList.add("hidden");
+    $("login").classList.remove("hidden");
+  }
+});
+
+showDashboard();
+</script>
+</body>
+</html>
